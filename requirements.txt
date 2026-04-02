@@ -1,0 +1,7 @@
+fastapi
+uvicorn
+pydantic
+yt-dlp
+openai-whisper
+google-generativeai
+httpcore
