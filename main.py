@@ -134,7 +134,7 @@ def root():
       </style>
     </head>
     <body>
-      <h1>🍳 Cooker</h1>
+      <h1> Cooker</h1>
       <p class="sub-title">유튜브 요리 영상 레시피 추출</p>
       <div class="card">
         <div class="input-group">
