@@ -1,135 +1,365 @@
 import os
+
+import time
+
+import hashlib
+
 import uvicorn
+
 from fastapi import FastAPI
+
 from fastapi.responses import HTMLResponse
+
 from pydantic import BaseModel
+
 from googleapiclient.discovery import build
+
 from youtube_transcript_api import YouTubeTranscriptApi
+
 from google import genai
+
 from fastapi.middleware.cors import CORSMiddleware
+
+
 
 app = FastAPI()
 
-# CORS 설정
+
+
+# CORS
+
 app.add_middleware(
+
     CORSMiddleware,
+
     allow_origins=["*"],
+
     allow_methods=["GET", "POST", "OPTIONS"],
+
     allow_headers=["*"],
+
 )
 
-# [보안 적용] 터미널 환경변수에서 키를 가져옵니다. 코드에는 키가 노출되지 않습니다.
+
+
+# 환경변수
+
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
+
 YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY", "")
 
-# Gemini 클라이언트 설정
+
+
 client = genai.Client(api_key=GEMINI_API_KEY)
 
-# YouTube API 설정
 youtube = build("youtube", "v3", developerKey=YOUTUBE_API_KEY)
 
+
+
 class VideoURL(BaseModel):
+
     url: str
 
+
+
+#  캐시 (간단 버전)
+
+cache = {}
+
+
+
+#  설정값
+
+MAX_TRANSCRIPT_LENGTH = 3000
+
+REQUEST_DELAY = 1.2  # rate limit 방지
+
+
+
+# ---------------------------
+
+# 유틸 함수
+
+# ---------------------------
+
 def get_video_id(url: str):
-    if "v=" in url: return url.split("v=")[-1].split("&")[0]
-    elif "youtu.be/" in url: return url.split("youtu.be/")[-1].split("?")[0]
+
+    if "v=" in url:
+
+        return url.split("v=")[-1].split("&")[0]
+
+    elif "youtu.be/" in url:
+
+        return url.split("youtu.be/")[-1].split("?")[0]
+
     return url.split("/")[-1]
 
-def get_transcript_robustly(video_id: str):
+
+
+def get_transcript(video_id: str):
+
     try:
+
         transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
+
         try:
-            transcript = transcript_list.find_transcript(['ko', 'ko-KR', 'en'])
+
+            transcript = transcript_list.find_transcript(['ko', 'en'])
+
         except:
-            first = next(iter(transcript_list))
-            transcript = first.translate('ko')
-        return " ".join([t['text'] for t in transcript.fetch()])
+
+            transcript = next(iter(transcript_list)).translate('ko')
+
+
+
+        text = " ".join([t['text'] for t in transcript.fetch()])
+
+        return text[:MAX_TRANSCRIPT_LENGTH]  #  토큰 제한
+
     except:
+
         return None
 
+
+
+def make_cache_key(video_id: str):
+
+    return hashlib.md5(video_id.encode()).hexdigest()
+
+
+
+# ---------------------------
+
+# Gemini 호출 (안정 버전)
+
+# ---------------------------
+
+def generate_recipe(title, content):
+
+    prompt = f"""
+
+제목: {title}
+
+내용: {content}
+
+
+
+다음 형식으로 요약:
+
+요리 이름:
+
+재료:
+
+순서:
+
+팁:
+
+
+
+간결하고 보기 좋게 작성.
+
+특수문자(*, #) 사용 금지.
+
+"""
+
+
+
+    for attempt in range(3):
+
+        try:
+
+            time.sleep(REQUEST_DELAY)
+
+
+
+            response = client.models.generate_content(
+
+                model="models/gemini-2.0-flash",
+
+                contents=prompt
+
+            )
+
+
+
+            return response.text.strip()
+
+
+
+        except Exception as e:
+
+            if "429" in str(e):
+
+                time.sleep(2 * (attempt + 1))
+
+            else:
+
+                raise e
+
+
+
+    raise Exception("AI 요청 실패 (rate limit)")
+
+
+
+# ---------------------------
+
+# API
+
+# ---------------------------
+
 @app.get("/", response_class=HTMLResponse)
+
 def root():
+
     return """
-    <!DOCTYPE html>
-    <html lang="ko">
-    <head>
-      <meta charset="UTF-8" />
-      <title>Cooker - 레시피 요약</title>
-      <link href="https://fonts.googleapis.com/css2?family=Gowun+Dodum&display=swap" rel="stylesheet">
-      <style>
-        body { background: #fdfdf5; font-family: 'Gowun Dodum', sans-serif; display: flex; flex-direction: column; align-items: center; padding: 50px; }
-        .card { background: white; padding: 30px; border-radius: 20px; box-shadow: 0 4px 15px rgba(0,0,0,0.05); width: 100%; max-width: 500px; }
-        input { width: 100%; padding: 12px; border: 1px solid #d4e8b0; border-radius: 10px; margin-bottom: 10px; outline: none; box-sizing: border-box; }
-        button { width: 100%; padding: 12px; background: #c8e6a0; border: none; border-radius: 10px; font-weight: bold; cursor: pointer; }
-        button:hover { background: #b8d690; }
-        #result { margin-top: 20px; white-space: pre-wrap; line-height: 1.6; background: #f9f9f0; padding: 15px; border-radius: 10px; display: none; text-align: left; }
-        .loading { color: #7a7a60; font-size: 0.9rem; margin-top: 10px; display: none; }
-      </style>
-    </head>
+
+    <html>
+
     <body>
-      <h1>🍳 Cooker</h1>
-      <p>유튜브 요리 영상 링크를 레시피로 요약해드려요</p>
-      <div class="card">
-        <input id="urlInput" type="text" placeholder="유튜브 링크를 붙여넣으세요" />
-        <button onclick="fetchRecipe()">레시피 요약하기</button>
-        <div id="loading" class="loading">AI가 열심히 영상을 분석 중입니다...</div>
-        <div id="result"></div>
-      </div>
-      <script>
-        async function fetchRecipe() {
-          const url = document.getElementById('urlInput').value;
-          const resDiv = document.getElementById('result');
-          const loading = document.getElementById('loading');
-          if(!url) return alert("링크를 입력해주세요!");
-          
-          resDiv.style.display = 'none'; 
-          loading.style.display = 'block';
-          
-          try {
-            const response = await fetch('/cook', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ url })
+
+        <h2> Cooker</h2>
+
+        <input id="url" style="width:300px"/>
+
+        <button onclick="go()">요약</button>
+
+        <pre id="result"></pre>
+
+
+
+        <script>
+
+        async function go() {
+
+            const btn = document.querySelector("button");
+
+            btn.disabled = true;
+
+
+
+            const url = document.getElementById("url").value;
+
+            const res = await fetch("/cook", {
+
+                method: "POST",
+
+                headers: {"Content-Type":"application/json"},
+
+                body: JSON.stringify({url})
+
             });
-            const data = await response.json();
-            if(data.status === 'success') {
-              resDiv.innerText = data.recipe;
-              resDiv.style.display = 'block';
-            } else { alert("오류: " + data.message); }
-          } catch (e) { alert("서버 연결에 실패했습니다."); }
-          finally { loading.style.display = 'none'; }
+
+
+
+            const data = await res.json();
+
+            document.getElementById("result").innerText =
+
+                data.recipe || data.message;
+
+
+
+            btn.disabled = false;
+
         }
-      </script>
+
+        </script>
+
     </body>
+
     </html>
+
     """
 
+
+
 @app.post("/cook")
-def create_recipe(item: VideoURL):
+
+def cook(item: VideoURL):
+
     try:
+
         video_id = get_video_id(item.url)
-        video_response = youtube.videos().list(part="snippet", id=video_id).execute()
-        if not video_response['items']:
-            return {"status": "error", "message": "영상을 찾을 수 없습니다."}
-        
-        snippet = video_response['items'][0]['snippet']
+
+        cache_key = make_cache_key(video_id)
+
+
+
+        # ✅ 캐시 먼저 확인
+
+        if cache_key in cache:
+
+            return {"status": "success", "recipe": cache[cache_key]}
+
+
+
+        # 유튜브 정보
+
+        video = youtube.videos().list(
+
+            part="snippet",
+
+            id=video_id
+
+        ).execute()
+
+
+
+        if not video['items']:
+
+            return {"status": "error", "message": "영상 없음"}
+
+
+
+        snippet = video['items'][0]['snippet']
+
         title = snippet['title']
-        description = snippet['description'][:800]
-        full_text = get_transcript_robustly(video_id)
-        
-        content_source = full_text if full_text else description
-        
-        # 아까 확인한 2.0-flash 모델 사용
-        response = client.models.generate_content(
-            model="models/gemini-2.0-flash", 
-            contents=f"제목: {title}\\n내용: {content_source}\\n\\n요리 이름, 재료, 순서, 팁 순으로 요약해줘. 특수문자(*)는 쓰지마."
-        )
-        return {"status": "success", "recipe": response.text.strip()}
+
+        description = snippet['description'][:500]
+
+
+
+        # 자막 가져오기
+
+        transcript = get_transcript(video_id)
+
+
+
+        content = transcript if transcript else description
+
+
+
+        # Gemini 호출
+
+        recipe = generate_recipe(title, content)
+
+
+
+        # 캐싱
+
+        cache[cache_key] = recipe
+
+
+
+        return {"status": "success", "recipe": recipe}
+
+
+
     except Exception as e:
+
         return {"status": "error", "message": str(e)}
 
+
+
+# ---------------------------
+
+# 실행
+
+# ---------------------------
+
 if __name__ == "__main__":
+
     port = int(os.environ.get("PORT", 10000))
-    print(f"서버가 시작되었습니다: http://localhost:{port}")
+
     uvicorn.run(app, host="0.0.0.0", port=port)
