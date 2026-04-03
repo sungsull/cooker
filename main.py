@@ -96,7 +96,7 @@ def generate_recipe(title, content):
             ],
             model="llama-3.1-8b-instant",
             temperature=1,              # 정확도 고정
-            top_p=0-.1,
+            top_p=0.1,
             frequency_penalty=1.2,     # 다진 마늘 루프 방지 (강력 처방)
             presence_penalty=0.5,      # 내용 정체 방지
         )
