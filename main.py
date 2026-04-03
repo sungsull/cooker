@@ -66,7 +66,7 @@ def root():
     <head>
       <meta charset="UTF-8" />
       <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-      <title>Cooker - 레시피 요약 🍳</title>
+      <title>Cooker </title>
       <link href="https://fonts.googleapis.com/css2?family=Gowun+Dodum&family=Nanum+Myeongjo:wght@700&display=swap" rel="stylesheet">
       <style>
         :root { --green: #c8e6a0; --green2: #e8f5d0; --cream: #fdfdf5; --text: #3a3a2e; --sub: #7a7a60; }
@@ -81,11 +81,11 @@ def root():
       </style>
     </head>
     <body>
-      <h1>🥘 Cooker</h1>
+      <h1> Cooker</h1>
       <div class="card">
         <input id="urlInput" type="text" placeholder="유튜브 링크를 입력하세요..." />
         <button id="submitBtn" onclick="fetchRecipe()">레시피 요약하기</button>
-        <div id="loading">AI가 자막을 분석하여 요리 중입니다... 👨‍🍳</div>
+        <div id="loading"> 분석 중입니다... </div>
         <div id="result"></div>
       </div>
       <script>
