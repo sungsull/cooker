@@ -33,8 +33,8 @@ class VideoURL(BaseModel):
 
 # 메모리 캐시 및 설정
 cache = {}
-MAX_TRANSCRIPT_LENGTH = 4000 
-REQUEST_DELAY = 1.0
+MAX_TRANSCRIPT_LENGTH = 5000  # 자동자막은 텍스트가 많으므로 한도를 조금 늘렸습니다.
+REQUEST_DELAY = 1.2
 
 # ---------------------------
 # 유틸리티 함수
@@ -45,25 +45,35 @@ def get_video_id(url: str):
     return url.split("/")[-1]
 
 def get_transcript(video_id: str):
+    """수동 자막뿐만 아니라 자동 생성 자막까지 찾아 한국어로 번역하는 핵심 함수"""
     try:
         transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
+        
+        # 1. 사용자가 직접 올린 한국어 자막이 있는지 확인
         try:
-            transcript = transcript_list.find_transcript(['ko', 'en'])
+            transcript = transcript_list.find_transcript(['ko'])
         except:
-            transcript = next(iter(transcript_list)).translate('ko')
+            # 2. 한국어 자막이 없다면 영어(또는 다른 언어) 자막을 찾아 한국어로 번역 요청
+            # find_transcript는 수동/자동 생성 자막 리스트를 모두 포함합니다.
+            try:
+                transcript = transcript_list.find_transcript(['en', 'ja', 'zh-Hans']).translate('ko')
+            except:
+                # 3. 그것도 없으면 리스트의 맨 처음에 있는 자막을 무조건 한국어로 번역
+                transcript = next(iter(transcript_list)).translate('ko')
+        
         text = " ".join([t['text'] for t in transcript.fetch()])
         return text[:MAX_TRANSCRIPT_LENGTH]
-    except:
+    except Exception as e:
+        print(f"자막 로딩 실패: {e}")
         return None
 
 def make_cache_key(video_id: str):
     return hashlib.md5(video_id.encode()).hexdigest()
 
 # ---------------------------
-# Gemini 2.5 Flash 호출 (프롬프트 튜닝 버전)
+# Gemini 2.5 Flash 호출
 # ---------------------------
 def generate_recipe(title, content):
-    # 인사말 삭제 및 미사여구 제거를 위한 강력한 프롬프트
     prompt = f"""
 내용: {title} / {content}
 
@@ -72,12 +82,15 @@ def generate_recipe(title, content):
 
 형식:
 요리 이름: (미사여구 없이 핵심 요리명만 작성)
+
 재료: (불렛포인트 없이 콤마나 줄바꿈으로 정리)
 순서: (번호를 매겨서 간결하게 작성)
+
 팁: (없으면 '없음'으로 작성)
 
 주의사항: 
 - '절대 실패 없는', '초간단' 같은 수식어는 모두 삭제할 것.
+- 반드시 한국어로 출력할 것.
 - 특수문자(*, #) 사용 금지.
 """
     
@@ -190,8 +203,11 @@ def cook(item: VideoURL):
         snippet = video['items'][0]['snippet']
         title = snippet['title']
         description = snippet['description'][:500]
+        
+        # 강화된 자막 추출기 실행
         transcript = get_transcript(video_id)
         
+        # 자막이 있으면 자막 사용, 없으면 영상 설명글 사용
         content = transcript if transcript else description
         recipe = generate_recipe(title, content)
         
