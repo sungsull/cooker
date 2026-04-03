@@ -6,11 +6,11 @@ from pydantic import BaseModel
 from googleapiclient.discovery import build
 from youtube_transcript_api import YouTubeTranscriptApi
 from google import genai
+from google.genai import types  # 추가 설정용
 from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI()
 
-# CORS 설정
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -22,8 +22,13 @@ app.add_middleware(
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY", "")
 
-# 클라이언트 초기화
-client = genai.Client(api_key=GEMINI_API_KEY)
+# [핵심 수정] v1 정식 버전을 사용하도록 클라이언트 설정
+# http_options를 통해 API 버전을 v1으로 고정합니다.
+client = genai.Client(
+    api_key=GEMINI_API_KEY,
+    http_options={'api_version': 'v1'}
+)
+
 youtube = build("youtube", "v3", developerKey=YOUTUBE_API_KEY)
 
 class VideoURL(BaseModel):
@@ -35,14 +40,11 @@ def get_video_id(url: str):
     return url.split("/")[-1]
 
 def get_transcript_robustly(video_id: str):
-    """CC 자막을 샅샅이 뒤져서 가져오는 로직"""
     try:
         transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
         try:
-            # 수동/자동 포함 한국어 우선 시도
             transcript = transcript_list.find_transcript(['ko', 'ko-KR', 'en'])
         except:
-            # 안 되면 첫 번째 자막을 한국어로 번역
             first = next(iter(transcript_list))
             transcript = first.translate('ko')
         return " ".join([t['text'] for t in transcript.fetch()])
@@ -51,7 +53,6 @@ def get_transcript_robustly(video_id: str):
 
 @app.get("/", response_class=HTMLResponse)
 def root():
-    # 재욱님 디자인 유지 (이모티콘 및 불필요 문구 제거)
     return """
     <!DOCTYPE html>
     <html lang="ko">
@@ -118,8 +119,7 @@ def create_recipe(item: VideoURL):
         
         content_source = full_text if full_text else description
         
-        # 404 에러 방지를 위해 모델명을 문자열로 정확히 전달
-        # 최신 google-genai는 이 방식을 가장 잘 인식합니다.
+        # v1 통로를 통해 gemini-1.5-flash 호출
         response = client.models.generate_content(
             model="gemini-1.5-flash",
             contents=f"제목: {title}\\n내용: {content_source}\\n\\n요리 이름, 재료, 순서, 팁 순으로 요약해줘. 특수문자(*)는 쓰지마."
@@ -130,5 +130,4 @@ def create_recipe(item: VideoURL):
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
-    # Render 환경에서 "0.0.0.0"은 필수입니다.
     uvicorn.run(app, host="0.0.0.0", port=port)
