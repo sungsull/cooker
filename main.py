@@ -33,7 +33,7 @@ class VideoURL(BaseModel):
 
 # 메모리 캐시 및 설정
 cache = {}
-MAX_TRANSCRIPT_LENGTH = 4000  # 2.5버전은 넉넉하니 4000자까지!
+MAX_TRANSCRIPT_LENGTH = 4000 
 REQUEST_DELAY = 1.0
 
 # ---------------------------
@@ -60,15 +60,30 @@ def make_cache_key(video_id: str):
     return hashlib.md5(video_id.encode()).hexdigest()
 
 # ---------------------------
-# Gemini 2.5 Flash 호출
+# Gemini 2.5 Flash 호출 (프롬프트 튜닝 버전)
 # ---------------------------
 def generate_recipe(title, content):
-    prompt = f"제목: {title}\n내용: {content}\n\n위 내용을 바탕으로 요리 이름, 재료, 상세 조리 순서, 팁 순서로 친절하게 요약해줘. 특수문자(*, #)는 쓰지 마."
+    # 인사말 삭제 및 미사여구 제거를 위한 강력한 프롬프트
+    prompt = f"""
+내용: {title} / {content}
+
+위 내용을 바탕으로 아래 형식에 맞춰 출력해. 
+불필요한 인사말이나 서론("요약해 드릴게요" 등)은 절대 하지 마.
+
+형식:
+요리 이름: (미사여구 없이 핵심 요리명만 작성)
+재료: (불렛포인트 없이 콤마나 줄바꿈으로 정리)
+순서: (번호를 매겨서 간결하게 작성)
+팁: (없으면 '없음'으로 작성)
+
+주의사항: 
+- '절대 실패 없는', '초간단' 같은 수식어는 모두 삭제할 것.
+- 특수문자(*, #) 사용 금지.
+"""
     
     for attempt in range(2):
         try:
             time.sleep(REQUEST_DELAY)
-            # 아까 캡처에서 확인한 한도 살아있는 모델!
             response = client.models.generate_content(
                 model="models/gemini-2.5-flash", 
                 contents=prompt
@@ -79,7 +94,7 @@ def generate_recipe(title, content):
                 time.sleep(2)
                 continue
             raise e
-    return "요약 요청이 너무 많습니다. 잠시 후 다시 시도해주세요."
+    return "요청량이 많습니다. 잠시 후 다시 시도해주세요."
 
 # ---------------------------
 # 메인 UI 및 API
@@ -91,7 +106,7 @@ def root():
     <html lang="ko">
     <head>
       <meta charset="UTF-8" />
-      <title>Cooker </title>
+      <title>Cooker</title>
       <link href="https://fonts.googleapis.com/css2?family=Gowun+Dodum&display=swap" rel="stylesheet">
       <style>
         body { background: #fdfdf5; font-family: 'Gowun Dodum', sans-serif; display: flex; flex-direction: column; align-items: center; padding: 50px; margin: 0; }
@@ -111,10 +126,10 @@ def root():
     </head>
     <body>
       <h1> Cooker</h1>
-      <p class="sub-title">유튜브 요리 레시피를 요약해드립니다</p>
+      <p class="sub-title">유튜브 요리 영상 레시피 추출</p>
       <div class="card">
         <div class="input-group">
-          <input id="urlInput" type="text" placeholder="여기에 유튜브 링크를 붙여넣으세요" />
+          <input id="urlInput" type="text" placeholder="유튜브 링크를 입력하세요" />
           <button id="btn" onclick="fetchRecipe()">요약</button>
         </div>
         <div id="loader" class="loader"></div>
@@ -148,7 +163,7 @@ def root():
               alert("에러: " + data.message);
             }
           } catch (e) {
-            alert("서버와 통신에 실패했습니다.");
+            alert("서버 연결 실패");
           } finally {
             loader.style.display = 'none';
             btn.disabled = false;
