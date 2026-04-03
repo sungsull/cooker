@@ -1,5 +1,6 @@
 fastapi
 uvicorn
-yt-dlp
-google-genai==1.70.0
-python-multipart
+google-genai
+google-api-python-client
+youtube-transcript-api
+pydantic
