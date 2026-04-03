@@ -14,8 +14,10 @@ app = FastAPI()
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Content-Type", "Accept"],
+    expose_headers=["*"],
 )
 
 # ✅ 수정 1: API 키 하드코딩 제거 → 환경변수로 안전하게 로드
