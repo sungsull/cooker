@@ -70,14 +70,19 @@ def generate_recipe(title, content):
 동영상 제목: {title}
 자막 및 내용: {content}
 
-위 내용을 분석해서 아래 형식으로 요약해. 
-인사말이나 서론은 절대 하지 마. 특히 조리 순서는 자막을 바탕으로 꼼꼼하게 작성해.
+위 내용을 바탕으로 실제 '조리법'을 요약해. 
+**주의: '인트로', '시식', '00:00' 같은 영상 타임라인 정보는 절대 포함하지 마.**
+사용자가 실제로 요리를 따라 할 수 있도록 구체적인 동작(썰기, 볶기, 삶기 등) 위주로 작성해.
 
 형식:
 요리 이름: (핵심 명칭)
-재료: (나열)
-순서: (단계별 작성)
-팁: (없으면 '맛있게 드세요')
+
+재료: (자막에 언급된 모든 식재료 나열)
+순서: (1번부터 번호를 매겨서, 실제 요리 순서대로 상세히 기술)
+
+팁: (요리 꿀팁이 있다면 작성하고, 없으면 '없음'이라고 작성)
+
+반드시 한국어로 작성하고, 가독성 좋게 줄바꿈을 사용해.
 """
     try:
         chat_completion = groq_client.chat.completions.create(
@@ -85,7 +90,7 @@ def generate_recipe(title, content):
                 {"role": "system", "content": "너는 요리 레시피 요약 전문가야. 불필요한 말 없이 정보만 제공해."},
                 {"role": "user", "content": prompt}
             ],
-            model="llama-3.3-70b-versatile",
+            model="llama-3.1-8b-instant",
             temperature=0.3,
         )
         return chat_completion.choices[0].message.content.strip()
