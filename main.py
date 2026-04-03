@@ -85,7 +85,7 @@ def root():
     <input id="urlInput" type="url" placeholder="유튜브 링크를 입력하세요..." />
   </div>
   <button id="submitBtn" onclick="fetchRecipe()">레시피 요약하기</button>
-  <div class="result-box" id="result">유튜브 링크를 입력하고 요약을 시작해보세요! 🍳</div>
+  <div class="result-box" id="result"> 요약 실행하기</div>
   <button class="copy-btn" id="copyBtn" onclick="copyResult()"> 레시피 복사</button>
 </div>
 <script>
