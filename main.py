@@ -7,7 +7,7 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 from googleapiclient.discovery import build
 from youtube_transcript_api import YouTubeTranscriptApi
-from groq import Groq  # Groq 라이브러리 사용
+from groq import Groq  # Groq 라이브러리만 사용
 from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI()
@@ -20,11 +20,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 환경변수 로드 (GROQ_API_KEY를 꼭 설정해주세요!)
+# 환경변수 로드
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
 YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY", "")
 
-# 클라이언트 초기화
+# ✅ 중요: 여기서 genai.Client 부분을 삭제하고 Groq만 남겼습니다.
 groq_client = Groq(api_key=GROQ_API_KEY)
 youtube = build("youtube", "v3", developerKey=YOUTUBE_API_KEY)
 
@@ -44,18 +44,14 @@ def get_video_id(url: str):
     return url.split("/")[-1]
 
 def get_transcript(video_id: str):
-    """자동자막까지 포함하여 한국어로 번역해 가져오는 함수"""
     try:
         transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
         try:
-            # 1. 한국어 자막 시도
             transcript = transcript_list.find_transcript(['ko'])
         except:
             try:
-                # 2. 없으면 영어 자막 등을 한국어로 번역
                 transcript = transcript_list.find_transcript(['en', 'ja']).translate('ko')
             except:
-                # 3. 마지막 수단: 첫 번째 자막 번역
                 transcript = next(iter(transcript_list)).translate('ko')
         
         text = " ".join([t['text'] for t in transcript.fetch()])
@@ -67,7 +63,7 @@ def make_cache_key(video_id: str):
     return hashlib.md5(video_id.encode()).hexdigest()
 
 # ---------------------------
-# Groq (Llama 3.1 70B) 호출
+# Groq 호출 로직
 # ---------------------------
 def generate_recipe(title, content):
     prompt = f"""
@@ -75,37 +71,29 @@ def generate_recipe(title, content):
 자막 및 내용: {content}
 
 위 내용을 분석해서 아래 형식으로 요약해. 
-인사말이나 서론("요약해 드릴게요" 등)은 절대 하지 마.
-특히 조리 순서는 자막 내용을 바탕으로 단계별로 상세히 작성해.
+인사말이나 서론은 절대 하지 마. 특히 조리 순서는 자막을 바탕으로 꼼꼼하게 작성해.
 
 형식:
-요리 이름: (미사여구 없는 핵심 명칭)
-
-재료: (콤마로 구분하여 나열)
-순서: (1번부터 번호를 매겨 상세히 작성)
-
-팁: (없으면 '없음'이라고 작성)
-
-주의사항:
-- 반드시 한국어로 작성할 것.
-- 특수문자(*, #) 사용 금지.
+요리 이름: (핵심 명칭)
+재료: (나열)
+순서: (단계별 작성)
+팁: (없으면 '맛있게 드세요')
 """
     try:
-        # Groq의 Llama 3.1 70B 모델 사용 (성능과 속도 모두 최상)
         chat_completion = groq_client.chat.completions.create(
             messages=[
                 {"role": "system", "content": "너는 요리 레시피 요약 전문가야. 불필요한 말 없이 정보만 제공해."},
                 {"role": "user", "content": prompt}
             ],
             model="llama-3.1-70b-versatile",
-            temperature=0.3, # 일관된 답변을 위해 온도를 낮춤
+            temperature=0.3,
         )
         return chat_completion.choices[0].message.content.strip()
     except Exception as e:
         return f"요약 중 오류 발생: {str(e)}"
 
 # ---------------------------
-# 메인 UI 및 API
+# 메인 UI
 # ---------------------------
 @app.get("/", response_class=HTMLResponse)
 def root():
@@ -143,20 +131,16 @@ def root():
         <div id="loader" class="loader"></div>
         <div id="result"></div>
       </div>
-
       <script>
         async function fetchRecipe() {
           const url = document.getElementById('urlInput').value;
           const resDiv = document.getElementById('result');
           const loader = document.getElementById('loader');
           const btn = document.getElementById('btn');
-
           if(!url) return alert("링크를 입력해주세요!");
-          
           resDiv.style.display = 'none';
           loader.style.display = 'block';
           btn.disabled = true;
-          
           try {
             const response = await fetch('/cook', {
               method: 'POST',
@@ -187,7 +171,6 @@ def cook(item: VideoURL):
     try:
         video_id = get_video_id(item.url)
         cache_key = make_cache_key(video_id)
-
         if cache_key in cache:
             return {"status": "success", "recipe": cache[cache_key]}
 
@@ -201,7 +184,6 @@ def cook(item: VideoURL):
         transcript = get_transcript(video_id)
         
         combined_content = f"설명글: {description}\n\n자막내용: {transcript if transcript else '없음'}"
-        
         recipe = generate_recipe(title, combined_content)
         
         cache[cache_key] = recipe
