@@ -7,7 +7,7 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 from googleapiclient.discovery import build
 from youtube_transcript_api import YouTubeTranscriptApi
-from google import genai
+from groq import Groq  # Groq 라이브러리 사용
 from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI()
@@ -20,12 +20,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 환경변수 로드
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
+# 환경변수 로드 (GROQ_API_KEY를 꼭 설정해주세요!)
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
 YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY", "")
 
 # 클라이언트 초기화
-client = genai.Client(api_key=GEMINI_API_KEY)
+groq_client = Groq(api_key=GROQ_API_KEY)
 youtube = build("youtube", "v3", developerKey=YOUTUBE_API_KEY)
 
 class VideoURL(BaseModel):
@@ -33,8 +33,7 @@ class VideoURL(BaseModel):
 
 # 메모리 캐시 및 설정
 cache = {}
-MAX_TRANSCRIPT_LENGTH = 5000  # 자동자막은 텍스트가 많으므로 한도를 조금 늘렸습니다.
-REQUEST_DELAY = 1.2
+MAX_TRANSCRIPT_LENGTH = 6000 
 
 # ---------------------------
 # 유틸리티 함수
@@ -45,69 +44,65 @@ def get_video_id(url: str):
     return url.split("/")[-1]
 
 def get_transcript(video_id: str):
-    """수동 자막뿐만 아니라 자동 생성 자막까지 찾아 한국어로 번역하는 핵심 함수"""
+    """자동자막까지 포함하여 한국어로 번역해 가져오는 함수"""
     try:
         transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
-        
-        # 1. 사용자가 직접 올린 한국어 자막이 있는지 확인
         try:
+            # 1. 한국어 자막 시도
             transcript = transcript_list.find_transcript(['ko'])
         except:
-            # 2. 한국어 자막이 없다면 영어(또는 다른 언어) 자막을 찾아 한국어로 번역 요청
-            # find_transcript는 수동/자동 생성 자막 리스트를 모두 포함합니다.
             try:
-                transcript = transcript_list.find_transcript(['en', 'ja', 'zh-Hans']).translate('ko')
+                # 2. 없으면 영어 자막 등을 한국어로 번역
+                transcript = transcript_list.find_transcript(['en', 'ja']).translate('ko')
             except:
-                # 3. 그것도 없으면 리스트의 맨 처음에 있는 자막을 무조건 한국어로 번역
+                # 3. 마지막 수단: 첫 번째 자막 번역
                 transcript = next(iter(transcript_list)).translate('ko')
         
         text = " ".join([t['text'] for t in transcript.fetch()])
         return text[:MAX_TRANSCRIPT_LENGTH]
-    except Exception as e:
-        print(f"자막 로딩 실패: {e}")
+    except:
         return None
 
 def make_cache_key(video_id: str):
     return hashlib.md5(video_id.encode()).hexdigest()
 
 # ---------------------------
-# Gemini 2.5 Flash 호출
+# Groq (Llama 3.1 70B) 호출
 # ---------------------------
 def generate_recipe(title, content):
     prompt = f"""
-내용: {title} / {content}
+동영상 제목: {title}
+자막 및 내용: {content}
 
-위 내용을 바탕으로 아래 형식에 맞춰 출력해. 
-불필요한 인사말이나 서론("요약해 드릴게요" 등)은 절대 하지 마.
+위 내용을 분석해서 아래 형식으로 요약해. 
+인사말이나 서론("요약해 드릴게요" 등)은 절대 하지 마.
+특히 조리 순서는 자막 내용을 바탕으로 단계별로 상세히 작성해.
 
 형식:
-요리 이름: (미사여구 없이 핵심 요리명만 작성)
+요리 이름: (미사여구 없는 핵심 명칭)
 
-재료: (불렛포인트 없이 콤마나 줄바꿈으로 정리)
-순서: (번호를 매겨서 간결하게 작성)
+재료: (콤마로 구분하여 나열)
+순서: (1번부터 번호를 매겨 상세히 작성)
 
-팁: (없으면 '없음'으로 작성)
+팁: (없으면 '없음'이라고 작성)
 
-주의사항: 
-- '절대 실패 없는', '초간단' 같은 수식어는 모두 삭제할 것.
-- 반드시 한국어로 출력할 것.
+주의사항:
+- 반드시 한국어로 작성할 것.
 - 특수문자(*, #) 사용 금지.
 """
-    
-    for attempt in range(2):
-        try:
-            time.sleep(REQUEST_DELAY)
-            response = client.models.generate_content(
-                model="models/gemini-2.5-flash", 
-                contents=prompt
-            )
-            return response.text.strip()
-        except Exception as e:
-            if "429" in str(e):
-                time.sleep(2)
-                continue
-            raise e
-    return "요청량이 많습니다. 잠시 후 다시 시도해주세요."
+    try:
+        # Groq의 Llama 3.1 70B 모델 사용 (성능과 속도 모두 최상)
+        chat_completion = groq_client.chat.completions.create(
+            messages=[
+                {"role": "system", "content": "너는 요리 레시피 요약 전문가야. 불필요한 말 없이 정보만 제공해."},
+                {"role": "user", "content": prompt}
+            ],
+            model="llama-3.1-70b-versatile",
+            temperature=0.3, # 일관된 답변을 위해 온도를 낮춤
+        )
+        return chat_completion.choices[0].message.content.strip()
+    except Exception as e:
+        return f"요약 중 오류 발생: {str(e)}"
 
 # ---------------------------
 # 메인 UI 및 API
@@ -202,14 +197,12 @@ def cook(item: VideoURL):
 
         snippet = video['items'][0]['snippet']
         title = snippet['title']
-        description = snippet['description'][:500]
-        
-        # 강화된 자막 추출기 실행
+        description = snippet['description'][:1000]
         transcript = get_transcript(video_id)
         
-        # 자막이 있으면 자막 사용, 없으면 영상 설명글 사용
-        content = transcript if transcript else description
-        recipe = generate_recipe(title, content)
+        combined_content = f"설명글: {description}\n\n자막내용: {transcript if transcript else '없음'}"
+        
+        recipe = generate_recipe(title, combined_content)
         
         cache[cache_key] = recipe
         return {"status": "success", "recipe": recipe}
