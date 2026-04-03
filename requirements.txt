@@ -1,6 +1,6 @@
 fastapi
 uvicorn
-google-genai
+google-genai>=0.4.0
 google-api-python-client
 youtube-transcript-api
 pydantic
