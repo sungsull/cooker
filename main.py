@@ -122,7 +122,7 @@ def create_recipe(item: VideoURL):
         
         # 아까 확인한 2.0-flash 모델 사용
         response = client.models.generate_content(
-            model="models/gemini-1.5-flash", 
+            model="models/gemini-2.0-flash", 
             contents=f"제목: {title}\\n내용: {content_source}\\n\\n요리 이름, 재료, 순서, 팁 순으로 요약해줘. 특수문자(*)는 쓰지마."
         )
         return {"status": "success", "recipe": response.text.strip()}
