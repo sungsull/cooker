@@ -6,11 +6,11 @@ from pydantic import BaseModel
 from googleapiclient.discovery import build
 from youtube_transcript_api import YouTubeTranscriptApi
 from google import genai
-from google.genai import types  # 추가 설정용
 from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI()
 
+# CORS 설정
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -18,17 +18,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# API 키 설정
+# [보안 적용] 터미널 환경변수에서 키를 가져옵니다. 코드에는 키가 노출되지 않습니다.
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY", "")
 
-# [핵심 수정] v1 정식 버전을 사용하도록 클라이언트 설정
-# http_options를 통해 API 버전을 v1으로 고정합니다.
-client = genai.Client(
-    api_key=GEMINI_API_KEY,
-    http_options={'api_version': 'v1'}
-)
+# Gemini 클라이언트 설정
+client = genai.Client(api_key=GEMINI_API_KEY)
 
+# YouTube API 설정
 youtube = build("youtube", "v3", developerKey=YOUTUBE_API_KEY)
 
 class VideoURL(BaseModel):
@@ -58,20 +55,21 @@ def root():
     <html lang="ko">
     <head>
       <meta charset="UTF-8" />
-      <title>Cooker</title>
+      <title>Cooker - 레시피 요약</title>
       <link href="https://fonts.googleapis.com/css2?family=Gowun+Dodum&display=swap" rel="stylesheet">
       <style>
         body { background: #fdfdf5; font-family: 'Gowun Dodum', sans-serif; display: flex; flex-direction: column; align-items: center; padding: 50px; }
         .card { background: white; padding: 30px; border-radius: 20px; box-shadow: 0 4px 15px rgba(0,0,0,0.05); width: 100%; max-width: 500px; }
-        input { width: 100%; padding: 12px; border: 1px solid #d4e8b0; border-radius: 10px; margin-bottom: 10px; outline: none; }
+        input { width: 100%; padding: 12px; border: 1px solid #d4e8b0; border-radius: 10px; margin-bottom: 10px; outline: none; box-sizing: border-box; }
         button { width: 100%; padding: 12px; background: #c8e6a0; border: none; border-radius: 10px; font-weight: bold; cursor: pointer; }
-        #result { margin-top: 20px; white-space: pre-wrap; line-height: 1.6; background: #f9f9f0; padding: 15px; border-radius: 10px; display: none; }
+        button:hover { background: #b8d690; }
+        #result { margin-top: 20px; white-space: pre-wrap; line-height: 1.6; background: #f9f9f0; padding: 15px; border-radius: 10px; display: none; text-align: left; }
         .loading { color: #7a7a60; font-size: 0.9rem; margin-top: 10px; display: none; }
       </style>
     </head>
     <body>
-      <h1>Cooker</h1>
-      <p>유튜브 요리 영상 링크를 레시피로 바꿔드려요</p>
+      <h1>🍳 Cooker</h1>
+      <p>유튜브 요리 영상 링크를 레시피로 요약해드려요</p>
       <div class="card">
         <input id="urlInput" type="text" placeholder="유튜브 링크를 붙여넣으세요" />
         <button onclick="fetchRecipe()">레시피 요약하기</button>
@@ -84,7 +82,10 @@ def root():
           const resDiv = document.getElementById('result');
           const loading = document.getElementById('loading');
           if(!url) return alert("링크를 입력해주세요!");
-          resDiv.style.display = 'none'; loading.style.display = 'block';
+          
+          resDiv.style.display = 'none'; 
+          loading.style.display = 'block';
+          
           try {
             const response = await fetch('/cook', {
               method: 'POST',
@@ -95,7 +96,7 @@ def root():
             if(data.status === 'success') {
               resDiv.innerText = data.recipe;
               resDiv.style.display = 'block';
-            } else { alert(data.message); }
+            } else { alert("오류: " + data.message); }
           } catch (e) { alert("서버 연결에 실패했습니다."); }
           finally { loading.style.display = 'none'; }
         }
@@ -119,9 +120,9 @@ def create_recipe(item: VideoURL):
         
         content_source = full_text if full_text else description
         
-        # v1 통로를 통해 gemini-1.5-flash 호출
+        # 아까 확인한 2.0-flash 모델 사용
         response = client.models.generate_content(
-            model="gemini-1.5-flash",
+            model="models/gemini-2.0-flash", 
             contents=f"제목: {title}\\n내용: {content_source}\\n\\n요리 이름, 재료, 순서, 팁 순으로 요약해줘. 특수문자(*)는 쓰지마."
         )
         return {"status": "success", "recipe": response.text.strip()}
@@ -130,4 +131,5 @@ def create_recipe(item: VideoURL):
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
+    print(f"서버가 시작되었습니다: http://localhost:{port}")
     uvicorn.run(app, host="0.0.0.0", port=port)
