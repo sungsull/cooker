@@ -37,7 +37,7 @@ def root():
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Pastel Recipe 👨‍🍳</title>
+  <title>Cooker </title>
   <link href="https://fonts.googleapis.com/css2?family=Gowun+Dodum&family=Nanum+Myeongjo:wght@400;700&display=swap" rel="stylesheet"/>
   <style>
     :root {
@@ -77,8 +77,8 @@ def root():
 </head>
 <body>
 <header>
-  <h1>🥘 Pastel Recipe</h1>
-  <p>유튜브 요리 영상 링크를 붙여넣으면 AI가 레시피를 정리해드려요</p>
+  <h1> Cooker</h1>
+  <p>유튜브 요리 영상 링크를 붙여넣으면 레시피를 정리해드립니다</p>
 </header>
 <div class="card">
   <div class="input-wrap">
@@ -86,7 +86,7 @@ def root():
   </div>
   <button id="submitBtn" onclick="fetchRecipe()">레시피 요약하기</button>
   <div class="result-box" id="result">유튜브 링크를 입력하고 요약을 시작해보세요! 🍳</div>
-  <button class="copy-btn" id="copyBtn" onclick="copyResult()">📋 레시피 복사</button>
+  <button class="copy-btn" id="copyBtn" onclick="copyResult()"> 레시피 복사</button>
 </div>
 <script>
   async function fetchRecipe() {
@@ -99,7 +99,7 @@ def root():
 
     btn.disabled = true;
     btn.innerHTML = '<span class="spinner"></span>분석 중...';
-    result.innerText = 'AI가 영상을 분석하고 있습니다... ⏳';
+    result.innerText = 'AI가 영상을 분석하고 있습니다... ';
     copyBtn.classList.remove('visible');
 
     try {
