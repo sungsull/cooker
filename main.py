@@ -1,18 +1,18 @@
 import os
-import time
+import re
 import hashlib
 import uvicorn
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 from googleapiclient.discovery import build
 from youtube_transcript_api import YouTubeTranscriptApi
-from groq import Groq  # Groq 라이브러리만 사용
+from groq import Groq
 from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI()
 
-# CORS 설정
+# CORS 설정 (플러터 앱이나 외부 접근 허용)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -24,7 +24,7 @@ app.add_middleware(
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
 YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY", "")
 
-# ✅ 중요: 여기서 genai.Client 부분을 삭제하고 Groq만 남겼습니다.
+# 클라이언트 설정
 groq_client = Groq(api_key=GROQ_API_KEY)
 youtube = build("youtube", "v3", developerKey=YOUTUBE_API_KEY)
 
@@ -39,19 +39,29 @@ MAX_TRANSCRIPT_LENGTH = 6000
 # 유틸리티 함수
 # ---------------------------
 def get_video_id(url: str):
+    """일반 영상, 쇼츠, 단축 주소에서 모두 ID를 추출합니다."""
+    pattern = r'(?:v=|\/shorts\/|youtu\.be\/)([a-zA-Z0-9_-]{11})'
+    match = re.search(pattern, url)
+    if match:
+        return match.group(1)
+    # 예외 케이스 처리
     if "v=" in url: return url.split("v=")[-1].split("&")[0]
     elif "youtu.be/" in url: return url.split("/")[-1].split("?")[0]
     return url.split("/")[-1]
 
 def get_transcript(video_id: str):
+    """자막 추출 및 한국어 번역 로직"""
     try:
         transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
         try:
+            # 1순위 한국어
             transcript = transcript_list.find_transcript(['ko'])
         except:
             try:
+                # 2순위 영어/일본어 번역
                 transcript = transcript_list.find_transcript(['en', 'ja']).translate('ko')
             except:
+                # 3순위 아무거나 번역
                 transcript = next(iter(transcript_list)).translate('ko')
         
         text = " ".join([t['text'] for t in transcript.fetch()])
@@ -62,10 +72,8 @@ def get_transcript(video_id: str):
 def make_cache_key(video_id: str):
     return hashlib.md5(video_id.encode()).hexdigest()
 
-# ---------------------------
-# Groq 호출 로직
-# ---------------------------
 def generate_recipe(title, content):
+    """재욱님의 최신 지침이 반영된 최적화 프롬프트"""
     prompt = f"""
 동영상 제목: {title}
 자막 및 내용: {content}
@@ -78,6 +86,7 @@ def generate_recipe(title, content):
 2. **불필요한 정보 제거**: '인트로', '00:00' 같은 타임라인과 '구독/좋아요' 멘트는 100% 삭제해.
 3. **조리 동작 중심**: 실제 요리 순서대로 번호를 매겨서 간결하게 작성해.
 요리이름에 쓸데없는 수식어는 빼고, 핵심 명칭만 써. 예를 들어 '맛있는 김치찌개 끓이는 법'은 '김치찌개'처럼 요리 이름만 작성해.
+그리고 요리이름 옆에 ** 같은거 빼줘.
 
 형식:
 요리 이름: (핵심 명칭)
@@ -92,7 +101,7 @@ def generate_recipe(title, content):
     try:
         chat_completion = groq_client.chat.completions.create(
             messages=[
-                {"role": "system", "content": "너는 요리 레시피 요약 전문가야. 불필요한 말 없이 정보만 제공해."},
+                {"role": "system", "content": "너는 요리 레시피 요약 전문가야. 정보만 제공해."},
                 {"role": "user", "content": prompt}
             ],
             model="llama-3.1-8b-instant",
@@ -103,7 +112,7 @@ def generate_recipe(title, content):
         return f"요약 중 오류 발생: {str(e)}"
 
 # ---------------------------
-# 메인 UI
+# 메인 웹 UI (HTML)
 # ---------------------------
 @app.get("/", response_class=HTMLResponse)
 def root():
@@ -176,19 +185,26 @@ def root():
     </html>
     """
 
+# ---------------------------
+# API 엔드포인트
+# ---------------------------
 @app.post("/cook")
 def cook(item: VideoURL):
     try:
         video_id = get_video_id(item.url)
+        if not video_id:
+            return {"status": "error", "message": "유효하지 않은 URL입니다."}
+
         cache_key = make_cache_key(video_id)
         if cache_key in cache:
             return {"status": "success", "recipe": cache[cache_key]}
 
-        video = youtube.videos().list(part="snippet", id=video_id).execute()
-        if not video['items']:
+        # YouTube Data API로 영상 정보 가져오기
+        video_response = youtube.videos().list(part="snippet", id=video_id).execute()
+        if not video_response['items']:
             return {"status": "error", "message": "영상을 찾을 수 없습니다."}
 
-        snippet = video['items'][0]['snippet']
+        snippet = video_response['items'][0]['snippet']
         title = snippet['title']
         description = snippet['description'][:1000]
         transcript = get_transcript(video_id)
