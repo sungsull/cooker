@@ -85,7 +85,7 @@ def generate_recipe(title, content):
                 {"role": "system", "content": "너는 요리 레시피 요약 전문가야. 불필요한 말 없이 정보만 제공해."},
                 {"role": "user", "content": prompt}
             ],
-            model="llama-3.1-8b-versatile",
+            model="llama-3.3-70b-versatile",
             temperature=0.3,
         )
         return chat_completion.choices[0].message.content.strip()
