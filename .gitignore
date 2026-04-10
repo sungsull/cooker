@@ -1,0 +1,8 @@
+venv/
+.venv/
+__pycache__/
+matarials/
+materials/
+*.pdf
+*.docx
+.env
