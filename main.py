@@ -1,7 +1,7 @@
 import os
 import time
 import re
-from fastapi import FastAPI
+from fastapi import FastAPI, Form  # FormData를 받기 위해 Form 추가
 from pydantic import BaseModel
 import yt_dlp
 import whisper
@@ -9,7 +9,7 @@ import google.generativeai as genai
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 from fastapi.responses import FileResponse
-from curl_cffi import requests  # [추가] 브라우저 지문 위장용
+from curl_cffi import requests
 
 app = FastAPI()
 
@@ -31,35 +31,35 @@ print("Whisper 모델 로딩 중...")
 whisper_model = whisper.load_model("small")
 print("Whisper 모델 로딩 완료!")
 
-class VideoURL(BaseModel):
-    url: str
-
 @app.get("/")
 def home():
     return FileResponse("index.html")
 
 @app.post("/cook")
-async def create_recipe(item: VideoURL):
+async def create_recipe(url: str = Form(...)):  # FormData의 'url' 필드를 직접 받음
     audio_file = "temp_audio.m4a"
 
     try:
-        print(f"--- 1. 작업 시작 (curl_cffi 지문 위장): {item.url} ---")
+        print(f"--- 1. 작업 시작 (curl_cffi 지문 위장): {url} ---")
 
-        if os.path.exists(audio_file):
-            os.remove(audio_file)
+        # 기존 파일 정리
+        for f in os.listdir("."):
+            if f.startswith("temp_audio"):
+                try: os.remove(f)
+                except: pass
 
-        # [핵심] curl_cffi를 사용하여 브라우저 세션 지문을 먼저 생성합니다.
+        # [핵심] curl_cffi를 사용하여 브라우저 세션 지문을 먼저 생성
         session = requests.Session()
         session.get(
-            item.url,
-            impersonate="chrome110",  # 크롬 지문 복제
+            url,
+            impersonate="chrome110",
             headers={
                 "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
                 "Referer": "https://www.google.com/"
             }
         )
 
-        # A. 오디오 다운로드 (우회 옵션 풀가동)
+        # A. 오디오 다운로드 (재욱님의 우회 옵션 풀가동)
         ydl_opts = {
             'format': 'm4a/bestaudio/best',
             'outtmpl': 'temp_audio.%(ext)s',
@@ -68,7 +68,6 @@ async def create_recipe(item: VideoURL):
             'subtitleslangs': ['ko', 'en'],
             'quiet': True,
             'no_warnings': True,
-            # 재욱님이 요청하신 차단 우회 옵션들
             'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36',
             'sleep_interval': 5,
             'max_sleep_interval': 10,
@@ -80,7 +79,7 @@ async def create_recipe(item: VideoURL):
         }
         
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(item.url, download=True)
+            info = ydl.extract_info(url, download=True)
             video_title = info.get('title', '제목 없음')
             video_description = info.get('description', '')[:500]
 
@@ -92,9 +91,7 @@ async def create_recipe(item: VideoURL):
             audio_file,
             language=None,
             task="transcribe",
-            verbose=False,
             fp16=False,
-            condition_on_previous_text=True,
             temperature=0.0,
         )
 
@@ -105,7 +102,7 @@ async def create_recipe(item: VideoURL):
         if not transcript:
             return {"status": "error", "message": "음성 인식 결과가 없습니다."}
 
-        # C. 자막 보조 데이터 수집 (기존 로직 유지)
+        # C. 자막 보조 데이터 수집 (재욱님의 정규표현식 로직)
         subtitle_text = ""
         for ext in ["ko.vtt", "en.vtt", "ko.srt", "en.srt"]:
             sub_path = f"temp_audio.{ext}"
@@ -119,7 +116,7 @@ async def create_recipe(item: VideoURL):
                 print(f"--- 자막 발견: {sub_path} ---")
                 break
 
-        # D. Gemini 요약
+        # D. Gemini 요약 (재욱님의 프롬프트 유지)
         print("--- 4. Gemini 레시피 요약 중 ---")
         context_parts = [f"[영상 제목]: {video_title}"]
         if video_description:
@@ -144,13 +141,13 @@ async def create_recipe(item: VideoURL):
 - 마크다운 특수 기호(**)는 사용하지 마.
 - 한국어로 작성해줘.
 """
-
         response = gemini_model.generate_content(prompt)
 
         # E. 임시 파일 정리
         for f in os.listdir("."):
             if f.startswith("temp_audio"):
-                os.remove(f)
+                try: os.remove(f)
+                except: pass
 
         print("--- 5. 완료! ---")
         return {
