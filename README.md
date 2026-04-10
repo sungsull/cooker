@@ -1,4 +1,3 @@
-cat > README.md << 'EOF'
 ---
 title: Cooker
 emoji: cook
@@ -10,4 +9,3 @@ pinned: false
 ---
 # Cooker
 AI-driven recipe summary application.
-EOF
