@@ -9,4 +9,3 @@ torchaudio
 torchvision
 setuptools-rust
 ffmpeg-python
-fastapi-middleware-cors
