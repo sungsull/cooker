@@ -1,27 +1,26 @@
 FROM python:3.10-slim
 
-# 루트 권한 확보 및 필수 라이브러리 설치
 USER root
 WORKDIR /app
 
-# faster-whisper 구동을 위해 libgomp1이 필수입니다.
+# 필수 시스템 라이브러리 설치
 RUN apt-get update && apt-get install -y \
     ffmpeg \
     libgomp1 \
     git \
     && rm -rf /var/lib/apt/lists/*
 
-# requirements.txt 설치
+# 파이썬 의존성 설치
 COPY requirements.txt .
-RUN pip install --no-cache-dir -U pip && \
+RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
 
-# 소스 복사 및 권한 부여
+# 소스 코드 복사
 COPY . .
-RUN chmod -R 777 /app
 
-# 포트 노출
+# 실행 권한 부여
+RUN chmod +x main.py
+
 EXPOSE 7860
 
-# 실행
 CMD ["python", "main.py"]
