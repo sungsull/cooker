@@ -1,13 +1,7 @@
 fastapi
 uvicorn
 pydantic
-yt-dlp
-openai-whisper
 google-generativeai
-torch
-torchaudio
-torchvision
-setuptools-rust
-ffmpeg-python
-curl_cffi
 python-multipart
+yt-dlp
+curl_cffi

@@ -1,19 +1,13 @@
 import os
-import time
-import re
-from fastapi import FastAPI, Form  # FormData를 받기 위해 Form 추가
-from pydantic import BaseModel
-import yt_dlp
-import whisper
-import google.generativeai as genai
-from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
+import google.generativeai as genai
+from fastapi import FastAPI, Form
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
-from curl_cffi import requests
 
 app = FastAPI()
 
-# CORS 설정
+# CORS 설정 (프론트와 백엔드 통신 허용)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -21,152 +15,46 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# --- [1단계] 설정 구간 ---
+# --- [Gemini 설정] ---
+# Hugging Face Settings에서 GEMINI_API_KEY를 반드시 등록하세요.
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 genai.configure(api_key=GEMINI_API_KEY)
 gemini_model = genai.GenerativeModel('models/gemini-1.5-flash')
 
-# Whisper 모델 로드
-print("Whisper 모델 로딩 중...")
-whisper_model = whisper.load_model("small")
-print("Whisper 모델 로딩 완료!")
-
 @app.get("/")
 def home():
+    # index.html 파일을 반환하여 프론트엔드 서빙
     return FileResponse("index.html")
 
-@app.post("/cook")
-async def create_recipe(url: str = Form(...)):  # FormData의 'url' 필드를 직접 받음
-    audio_file = "temp_audio.m4a"
-
+@app.post("/summarize")
+async def summarize_recipe(
+    transcript: str = Form(...), 
+    video_title: str = Form("알 수 없는 요리")
+):
     try:
-        print(f"--- 1. 작업 시작 (curl_cffi 지문 위장): {url} ---")
-
-        # 기존 파일 정리
-        for f in os.listdir("."):
-            if f.startswith("temp_audio"):
-                try: os.remove(f)
-                except: pass
-
-        # [핵심] curl_cffi를 사용하여 브라우저 세션 지문을 먼저 생성
-        session = requests.Session()
-        session.get(
-            url,
-            impersonate="chrome110",
-            headers={
-                "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
-                "Referer": "https://www.google.com/"
-            }
-        )
-
-        # A. 오디오 다운로드 (재욱님의 우회 옵션 풀가동)
-        ydl_opts = {
-            'format': 'm4a/bestaudio/best',
-            'outtmpl': 'temp_audio.%(ext)s',
-            'writesubtitles': True,
-            'writeautomaticsub': True,
-            'subtitleslangs': ['ko', 'en'],
-            'quiet': True,
-            'no_warnings': True,
-            'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36',
-            'sleep_interval': 5,
-            'max_sleep_interval': 10,
-            'referer': 'https://www.youtube.com/',
-            'http_headers': {
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
-                'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7',
-            }
-        }
+        print(f"--- 요약 요청 수신: {video_title} (텍스트 길이: {len(transcript)}자) ---")
         
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=True)
-            video_title = info.get('title', '제목 없음')
-            video_description = info.get('description', '')[:500]
-
-        print(f"--- 2. 다운로드 완료: {video_title} ---")
-
-        # B. Whisper 음성 전사
-        print("--- 3. Whisper 음성 인식 중 ---")
-        result = whisper_model.transcribe(
-            audio_file,
-            language=None,
-            task="transcribe",
-            fp16=False,
-            temperature=0.0,
-        )
-
-        transcript = result["text"].strip()
-        detected_language = result.get("language", "unknown")
-        print(f"--- 감지 언어: {detected_language}, 전사 길이: {len(transcript)}자 ---")
-
-        if not transcript:
-            return {"status": "error", "message": "음성 인식 결과가 없습니다."}
-
-        # C. 자막 보조 데이터 수집 (재욱님의 정규표현식 로직)
-        subtitle_text = ""
-        for ext in ["ko.vtt", "en.vtt", "ko.srt", "en.srt"]:
-            sub_path = f"temp_audio.{ext}"
-            if os.path.exists(sub_path):
-                with open(sub_path, "r", encoding="utf-8") as f:
-                    raw = f.read()
-                    clean = re.sub(r'\d{2}:\d{2}[\d:,.]+\s*-->\s*\d{2}:\d{2}[\d:,.]+', '', raw)
-                    clean = re.sub(r'<[^>]+>', '', clean)
-                    clean = re.sub(r'WEBVTT.*?\n', '', clean)
-                    subtitle_text = ' '.join(clean.split())[:2000]
-                print(f"--- 자막 발견: {sub_path} ---")
-                break
-
-        # D. Gemini 요약 (재욱님의 프롬프트 유지)
-        print("--- 4. Gemini 레시피 요약 중 ---")
-        context_parts = [f"[영상 제목]: {video_title}"]
-        if video_description:
-            context_parts.append(f"[영상 설명]: {video_description}")
-        if subtitle_text:
-            context_parts.append(f"[자막 보조 데이터]: {subtitle_text[:1000]}")
-        context_parts.append(f"[음성 전사 원문]:\n{transcript[:8000]}")
-
-        full_context = "\n\n".join(context_parts)
-
         prompt = f"""
-너는 최고의 요리 전문 에디터야. 아래 내용을 바탕으로 깔끔한 레시피 요약본만 작성해줘.
+너는 최고의 요리 에디터야. 아래의 음성 전사 내용을 바탕으로 아주 깔끔한 레시피 요약본을 만들어줘.
+마크다운 특수문자(**)는 절대 사용하지 마.
 
-{full_context}
+[영상 제목]: {video_title}
+[전사 내용]: {transcript[:8000]}
 
 [출력 형식]:
 1. 요리 이름:
 2. 핵심 재료:
 3. 요리 순서:
 4. 꿀팁:
-
-- 마크다운 특수 기호(**)는 사용하지 마.
-- 한국어로 작성해줘.
 """
         response = gemini_model.generate_content(prompt)
-
-        # E. 임시 파일 정리
-        for f in os.listdir("."):
-            if f.startswith("temp_audio"):
-                try: os.remove(f)
-                except: pass
-
-        print("--- 5. 완료! ---")
-        return {
-            "status": "success",
-            "recipe": response.text.strip(),
-            "debug": {
-                "video_title": video_title,
-                "detected_language": detected_language,
-                "transcript_length": len(transcript),
-            }
-        }
+        
+        return {"status": "success", "recipe": response.text.strip()}
 
     except Exception as e:
-        for f in os.listdir("."):
-            if f.startswith("temp_audio"):
-                try: os.remove(f)
-                except: pass
-        print(f"!!! 에러 발생: {str(e)} !!!")
-        return {"status": "error", "message": f"오류 발생: {str(e)}"}
+        print(f"!!! 요약 에러 발생: {str(e)} !!!")
+        return {"status": "error", "message": f"서버 요약 중 오류: {str(e)}"}
 
 if __name__ == "__main__":
+    # Hugging Face Spaces 기본 포트인 7860 사용
     uvicorn.run(app, host="0.0.0.0", port=7860)
