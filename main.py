@@ -4,10 +4,22 @@ import google.generativeai as genai
 from fastapi import FastAPI, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
+from starlette.middleware.base import BaseHTTPMiddleware
 import yt_dlp
 
-app = FastAPI()
+# CSP 보안 헤더를 강제로 주입하는 미들웨어
+class CSPMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        response = await call_next(request)
+        response.headers["Content-Security-Policy"] = (
+            "default-src * 'unsafe-inline' 'unsafe-eval' data: blob:; "
+            "script-src * 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net; "
+            "connect-src *; img-src * data:; frame-src *; style-src * 'unsafe-inline';"
+        )
+        return response
 
+app = FastAPI()
+app.add_middleware(CSPMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -23,7 +35,6 @@ gemini_model = genai.GenerativeModel('models/gemini-1.5-flash')
 def home():
     return FileResponse("index.html")
 
-# [추가] 유튜브 오디오 URL만 추출하는 엔드포인트
 @app.post("/get_audio_url")
 async def get_audio_url(url: str = Form(...)):
     try:
@@ -35,11 +46,7 @@ async def get_audio_url(url: str = Form(...)):
         }
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)
-            return {
-                "status": "success",
-                "audio_url": info['url'],
-                "title": info.get('title', '유튜브 영상')
-            }
+            return {"status": "success", "audio_url": info['url'], "title": info.get('title', '요리 영상')}
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
